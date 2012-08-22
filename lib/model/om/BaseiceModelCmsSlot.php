@@ -25,6 +25,12 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
   protected static $peer;
 
   /**
+   * The flag var to prevent infinit loop in deep copy
+   * @var       boolean
+   */
+  protected $startCopy = false;
+
+  /**
    * The value for the id field.
    * @var        int
    */
@@ -85,6 +91,12 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
    * @var array Current I18N objects
    */
   protected $current_i18n = array();
+
+  /**
+   * An array of objects scheduled for deletion.
+   * @var    array
+   */
+  protected $iceModelCmsSlotI18nsScheduledForDeletion = null;
 
   /**
    * Applies default values to this object.
@@ -531,7 +543,7 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
         $con->commit();
       }
     }
-    catch (PropelException $e)
+    catch (Exception $e)
     {
       $con->rollBack();
       throw $e;
@@ -624,7 +636,7 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
       $con->commit();
       return $affectedRows;
     }
-    catch (PropelException $e)
+    catch (Exception $e)
     {
       $con->rollBack();
       throw $e;
@@ -649,33 +661,30 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
     {
       $this->alreadyInSave = true;
 
-      if ($this->isNew() )
+      if ($this->isNew() || $this->isModified())
       {
-        $this->modifiedColumns[] = iceModelCmsSlotPeer::ID;
-      }
-
-      // If this object has been modified, then save it to the database.
-      if ($this->isModified())
-      {
+        // persist changes
         if ($this->isNew())
         {
-          $criteria = $this->buildCriteria();
-          if ($criteria->keyContainsValue(iceModelCmsSlotPeer::ID) )
-          {
-            throw new PropelException('Cannot insert a value for auto-increment primary key ('.iceModelCmsSlotPeer::ID.')');
-          }
-
-          $pk = BasePeer::doInsert($criteria, $con);
-          $affectedRows = 1;
-          $this->setId($pk);  //[IMV] update autoincrement primary key
-          $this->setNew(false);
+          $this->doInsert($con);
         }
         else
         {
-          $affectedRows = iceModelCmsSlotPeer::doUpdate($this, $con);
+          $this->doUpdate($con);
         }
+        $affectedRows += 1;
+        $this->resetModified();
+      }
 
-        $this->resetModified(); // [HL] After being saved an object is no longer 'modified'
+      if ($this->iceModelCmsSlotI18nsScheduledForDeletion !== null)
+      {
+        if (!$this->iceModelCmsSlotI18nsScheduledForDeletion->isEmpty())
+        {
+          iceModelCmsSlotI18nQuery::create()
+            ->filterByPrimaryKeys($this->iceModelCmsSlotI18nsScheduledForDeletion->getPrimaryKeys(false))
+            ->delete($con);
+          $this->iceModelCmsSlotI18nsScheduledForDeletion = null;
+        }
       }
 
       if ($this->colliceModelCmsSlotI18ns !== null)
@@ -694,6 +703,112 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
 
     }
     return $affectedRows;
+  }
+
+  /**
+   * Insert the row in the database.
+   *
+   * @param      PropelPDO $con
+   *
+   * @throws     PropelException
+   * @see        doSave()
+   */
+  protected function doInsert(PropelPDO $con)
+  {
+    $modifiedColumns = array();
+    $index = 0;
+
+    $this->modifiedColumns[] = iceModelCmsSlotPeer::ID;
+    if (null !== $this->id)
+    {
+      throw new PropelException('Cannot insert a value for auto-increment primary key (' . iceModelCmsSlotPeer::ID . ')');
+    }
+
+     // check the columns in natural order for more readable SQL queries
+    if ($this->isColumnModified(iceModelCmsSlotPeer::ID))
+    {
+      $modifiedColumns[':p' . $index++]  = '`ID`';
+    }
+    if ($this->isColumnModified(iceModelCmsSlotPeer::TYPE))
+    {
+      $modifiedColumns[':p' . $index++]  = '`TYPE`';
+    }
+    if ($this->isColumnModified(iceModelCmsSlotPeer::NAME))
+    {
+      $modifiedColumns[':p' . $index++]  = '`NAME`';
+    }
+    if ($this->isColumnModified(iceModelCmsSlotPeer::UPDATED_AT))
+    {
+      $modifiedColumns[':p' . $index++]  = '`UPDATED_AT`';
+    }
+    if ($this->isColumnModified(iceModelCmsSlotPeer::CREATED_AT))
+    {
+      $modifiedColumns[':p' . $index++]  = '`CREATED_AT`';
+    }
+
+    $sql = sprintf(
+      'INSERT INTO `cms_slot` (%s) VALUES (%s)',
+      implode(', ', $modifiedColumns),
+      implode(', ', array_keys($modifiedColumns))
+    );
+
+    try
+    {
+      $stmt = $con->prepare($sql);
+      foreach ($modifiedColumns as $identifier => $columnName)
+      {
+        switch ($columnName)
+        {
+          case '`ID`':
+            $stmt->bindValue($identifier, $this->id, PDO::PARAM_INT);
+            break;
+          case '`TYPE`':
+            $stmt->bindValue($identifier, $this->type, PDO::PARAM_STR);
+            break;
+          case '`NAME`':
+            $stmt->bindValue($identifier, $this->name, PDO::PARAM_STR);
+            break;
+          case '`UPDATED_AT`':
+            $stmt->bindValue($identifier, $this->updated_at, PDO::PARAM_STR);
+            break;
+          case '`CREATED_AT`':
+            $stmt->bindValue($identifier, $this->created_at, PDO::PARAM_STR);
+            break;
+        }
+      }
+      $stmt->execute();
+    }
+    catch (Exception $e)
+    {
+      Propel::log($e->getMessage(), Propel::LOG_ERR);
+      throw new PropelException(sprintf('Unable to execute INSERT statement [%s]', $sql), $e);
+    }
+
+    try
+    {
+      $pk = $con->lastInsertId();
+    }
+    catch (Exception $e)
+    {
+      throw new PropelException('Unable to get autoincrement id.', $e);
+    }
+    $this->setId($pk);
+
+    $this->setNew(false);
+  }
+
+  /**
+   * Update the row in the database.
+   *
+   * @param      PropelPDO $con
+   *
+   * @see        doSave()
+   */
+  protected function doUpdate(PropelPDO $con)
+  {
+    $selectCriteria = $this->buildPkeyCriteria();
+    $valuesCriteria = $this->buildCriteria();
+    BasePeer::doUpdate($selectCriteria, $valuesCriteria, $con);
   }
 
   /**
@@ -1028,11 +1143,13 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
     $copyObj->setUpdatedAt($this->getUpdatedAt());
     $copyObj->setCreatedAt($this->getCreatedAt());
 
-    if ($deepCopy)
+    if ($deepCopy && !$this->startCopy)
     {
       // important: temporarily setNew(false) because this affects the behavior of
       // the getter/setter methods for fkey referrer objects.
       $copyObj->setNew(false);
+      // store object hash to prevent cycle
+      $this->startCopy = true;
 
       foreach ($this->geticeModelCmsSlotI18ns() as $relObj)
       {
@@ -1041,6 +1158,8 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
         }
       }
 
+      //unflag object copy
+      $this->startCopy = false;
     }
 
     if ($makeNew)
@@ -1181,6 +1300,32 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
   }
 
   /**
+   * Sets a collection of iceModelCmsSlotI18n objects related by a one-to-many relationship
+   * to the current object.
+   * It will also schedule objects for deletion based on a diff between old objects (aka persisted)
+   * and new objects from the given Propel collection.
+   *
+   * @param      PropelCollection $iceModelCmsSlotI18ns A Propel collection.
+   * @param      PropelPDO $con Optional connection object
+   */
+  public function seticeModelCmsSlotI18ns(PropelCollection $iceModelCmsSlotI18ns, PropelPDO $con = null)
+  {
+    $this->iceModelCmsSlotI18nsScheduledForDeletion = $this->geticeModelCmsSlotI18ns(new Criteria(), $con)->diff($iceModelCmsSlotI18ns, false);
+
+    foreach ($iceModelCmsSlotI18ns as $iceModelCmsSlotI18n)
+    {
+      // Fix issue with collection modified by reference
+      if ($iceModelCmsSlotI18n->isNew())
+      {
+        $iceModelCmsSlotI18n->seticeModelCmsSlot($this);
+      }
+      $this->addiceModelCmsSlotI18n($iceModelCmsSlotI18n);
+    }
+
+    $this->colliceModelCmsSlotI18ns = $iceModelCmsSlotI18ns;
+  }
+
+  /**
    * Returns the number of related iceModelCmsSlotI18n objects.
    *
    * @param      Criteria $criteria
@@ -1229,11 +1374,19 @@ abstract class BaseiceModelCmsSlot extends BaseObject  implements Persistent
       $this->initiceModelCmsSlotI18ns();
     }
     if (!$this->colliceModelCmsSlotI18ns->contains($l)) { // only add it if the **same** object is not already associated
-      $this->colliceModelCmsSlotI18ns[]= $l;
-      $l->seticeModelCmsSlot($this);
+      $this->doAddiceModelCmsSlotI18n($l);
     }
 
     return $this;
+  }
+
+  /**
+   * @param  iceModelCmsSlotI18n $iceModelCmsSlotI18n The iceModelCmsSlotI18n object to add.
+   */
+  protected function doAddiceModelCmsSlotI18n($iceModelCmsSlotI18n)
+  {
+    $this->colliceModelCmsSlotI18ns[]= $iceModelCmsSlotI18n;
+    $iceModelCmsSlotI18n->seticeModelCmsSlot($this);
   }
 
   /**
